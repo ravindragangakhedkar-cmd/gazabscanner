@@ -24,6 +24,15 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+// Public guest identity used only to satisfy legacy scanner components that
+// still expect a signed-in user. No Firebase authentication is performed.
+const guestUser = {
+  uid: 'public-open-access',
+  email: 'guest@gazabpaisa.local',
+  emailVerified: true,
+  displayName: 'Guest',
+} as User;
 const disabled = async (): Promise<never> => {
   throw new Error('Sign-in and Firebase authentication have been removed. This site is operating in open-access mode.');
 };
@@ -42,7 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={{
-      user: null,
+      user: guestUser,
       profile: null,
       authReady: true,
       isVerified: true,
