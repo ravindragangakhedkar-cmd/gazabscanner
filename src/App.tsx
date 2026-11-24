@@ -4,6 +4,7 @@
  */
 import { useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { AuthProvider } from './context/AuthContext';
 import { TopNav, type AppPage } from './components/TopNav';
 import { MarketTicker } from './components/MarketTicker';
 import { HomePage } from './pages/HomePage';
@@ -66,7 +67,9 @@ function AppShell() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <AppShell />
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
     </ErrorBoundary>
   );
 }
