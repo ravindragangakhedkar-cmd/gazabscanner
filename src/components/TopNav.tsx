@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Menu, X } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
 
 export type AppPage =
   | 'home'
@@ -34,7 +33,6 @@ const NAV_ITEMS: Array<{ id: AppPage; label: string }> = [
 ];
 
 export function TopNav({ activePage, onNavigate }: TopNavProps) {
-  const { user, isVerified, signOut } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleNav = (page: AppPage) => {
@@ -78,24 +76,7 @@ export function TopNav({ activePage, onNavigate }: TopNavProps) {
 
         {/* Zone 3: Primary action */}
         <div className="flex items-center gap-3 shrink-0">
-          {user && isVerified ? (
-            <button
-              type="button"
-              onClick={() => void signOut()}
-              className="hidden sm:inline-flex items-center px-4 py-2 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              title={user.email ?? 'Signed in'}
-            >
-              Sign Out
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => handleNav('auth')}
-              className="hidden sm:inline-flex items-center px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              Sign In
-            </button>
-          )}
+          <span className="hidden sm:inline-flex items-center px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 rounded-lg">Open Access</span>
 
           <button
             type="button"
@@ -128,26 +109,7 @@ export function TopNav({ activePage, onNavigate }: TopNavProps) {
             );
           })}
           <div className="pt-2 border-t border-slate-100">
-            {user && isVerified ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileOpen(false);
-                  void signOut();
-                }}
-                className="w-full py-2.5 px-3 text-left text-sm font-semibold text-slate-900 bg-slate-100 rounded-lg"
-              >
-                Sign Out ({user.email})
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => handleNav('auth')}
-                className="w-full py-2.5 px-3 text-center text-sm font-semibold text-white bg-emerald-700 rounded-lg"
-              >
-                Sign In with Gmail / Email
-              </button>
-            )}
+            <div className="px-3 py-2 text-xs font-semibold text-emerald-800">Open Access — no sign-in required</div>
           </div>
         </div>
       )}
