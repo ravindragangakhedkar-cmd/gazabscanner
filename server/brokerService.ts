@@ -76,7 +76,7 @@ export async function initiateBrokerLogin(
 
   const challengeId = crypto.randomUUID();
   const maskedMobile = maskIndianMobile(mobile);
-  // Use Nubra's phone OTP flow only. No BROKER_API_BASE_URL fallback and
+  // Use Nubra's phone OTP flow only; no external broker API fallback.
   // no locally generated/demo OTP: the code must be delivered by Nubra to the
   // registered mobile number before the user can continue.
   const nubraBase = getSafeNubraBaseUrl();
