@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { useState } from 'react';
-import { AuthProvider } from './context/AuthContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TopNav, type AppPage } from './components/TopNav';
 import { MarketTicker } from './components/MarketTicker';
-import { AuthGatePage } from './components/AuthGatePage';
 import { HomePage } from './pages/HomePage';
 import { Scanner1Page } from './pages/Scanner1Page';
 import { Scanner2Page } from './pages/Scanner2Page';
@@ -39,9 +37,6 @@ function AppShell() {
         {activePage === 'broker' && <BrokerConnectPage onNavigate={setActivePage} />}
         {activePage === 'pricing' && <PricingPage onNavigate={setActivePage} />}
         {activePage === 'contact' && <ContactPage />}
-        {activePage === 'auth' && (
-          <AuthGatePage onSuccess={() => setActivePage('scanner1')} />
-        )}
       </main>
 
       <footer className="border-t border-slate-200 bg-white py-8 mt-auto">
@@ -71,9 +66,7 @@ function AppShell() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <AppShell />
-      </AuthProvider>
+      <AppShell />
     </ErrorBoundary>
   );
 }
