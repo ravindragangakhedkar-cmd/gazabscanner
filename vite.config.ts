@@ -27,6 +27,21 @@ export default defineConfig(() => {
           }
         },
       },
+      // Vercel's Express deployment serves static files from /public via its CDN.
+      // Keep Vite's normal dist output for local preview, then mirror the completed
+      // production bundle into public so the CDN can serve index.html and assets.
+      {
+        name: 'publish-vercel-static-assets',
+        apply: 'build',
+        closeBundle(): void {
+          const distDir = path.resolve(__dirname, 'dist');
+          const publicDir = path.resolve(__dirname, 'public');
+          if (fs.existsSync(path.join(distDir, 'index.html'))) {
+            fs.mkdirSync(publicDir, {recursive: true});
+            fs.cpSync(distDir, publicDir, {recursive: true, force: true});
+          }
+        },
+      },
     ],
     resolve: {
       alias: {
