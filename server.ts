@@ -502,6 +502,11 @@ app.use(
   },
 );
 
+export { app };
+
+// Vercel imports the Express app as a serverless function. Do not call listen()
+// in that environment; Vercel owns the HTTP listener. Local development keeps
+// the existing standalone Express + Vite middleware server.
 async function startServer() {
   const port = Number(process.env.PORT || 3000);
   const distDir = path.resolve(__dirname, 'dist');
@@ -526,4 +531,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
