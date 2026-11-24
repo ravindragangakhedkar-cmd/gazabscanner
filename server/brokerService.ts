@@ -76,110 +76,58 @@ export async function initiateBrokerLogin(
 
   const challengeId = crypto.randomUUID();
   const maskedMobile = maskIndianMobile(mobile);
-  const brokerBaseUrl = process.env.BROKER_API_BASE_URL?.trim();
-
-  // Attempt Nubra OMS V3 phone OTP initiation when provider is 'nubra'
-  if (provider === 'nubra') {
-    const nubraBase = getSafeNubraBaseUrl();
-    const deviceId =
-      process.env.NUBRA_DEVICE_ID?.trim() || `GP-${crypto.randomBytes(6).toString('hex')}`;
-    try {
-      const step1 = await fetch(`${nubraBase}/sendphoneotp`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-device-id': deviceId,
-        },
-        body: JSON.stringify({ phone: mobile, skip_totp: false }),
-        signal: AbortSignal.timeout(6000),
-      });
-      if (step1.ok) {
-        const j1 = (await step1.json()) as { temp_token?: string; token?: string };
-        const tempToken = j1.temp_token || j1.token;
-        if (tempToken) {
-          pendingChallenges.set(challengeId, {
-            challengeId,
-            userId,
-            mobile,
-            mpin,
-            maskedMobile,
-            otpHash: '',
-            demoOtpCode: null,
-            mode: 'live-api',
-            provider: 'nubra',
-            nubraTempToken: tempToken,
-            nubraDeviceId: deviceId,
-            expiresAt: Date.now() + 5 * 60 * 1000,
-          });
-          return {
-            challengeId,
-            maskedMobile,
-            mode: 'live-api',
-            provider: 'nubra',
-            message: `OTP dispatched via Nubra Broker API to ${maskedMobile}.`,
-          };
-        }
-      }
-    } catch {
-      // Fall through cleanly if account is not registered on live Nubra or OTP dispatch fails
-    }
+  // Use Nubra's phone OTP flow only. No BROKER_API_BASE_URL fallback and
+  // no locally generated/demo OTP: the code must be delivered by Nubra to the
+  // registered mobile number before the user can continue.
+  const nubraBase = getSafeNubraBaseUrl();
+  const deviceId =
+    process.env.NUBRA_DEVICE_ID?.trim() || `GP-${crypto.randomBytes(6).toString('hex')}`;
+  let step1: Response;
+  try {
+    step1 = await fetch(`${nubraBase}/sendphoneotp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-device-id': deviceId,
+      },
+      body: JSON.stringify({ phone: mobile, skip_totp: false }),
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch {
+    throw new Error('Could not reach Nubra to send the OTP. Please try again shortly.');
   }
 
-  if (brokerBaseUrl) {
-    try {
-      const res = await fetch(`${brokerBaseUrl.replace(/\/$/, '')}/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile, mpin }),
-        signal: AbortSignal.timeout(7000),
-      });
-      if (res.ok) {
-        pendingChallenges.set(challengeId, {
-          challengeId,
-          userId,
-          mobile,
-          mpin,
-          maskedMobile,
-          otpHash: '',
-          demoOtpCode: null,
-          mode: 'live-api',
-          provider,
-          expiresAt: Date.now() + 5 * 60 * 1000,
-        });
-        return {
-          challengeId,
-          maskedMobile,
-          mode: 'live-api',
-          provider,
-          message: `OTP dispatched via Broker API to ${maskedMobile}.`,
-        };
-      }
-    } catch {
-      // Fall through to verified sandbox challenge if upstream endpoint is unreachable
-    }
+  if (!step1.ok) {
+    const detail = await step1.text().catch(() => '');
+    throw new Error(`Nubra could not send the OTP (HTTP ${step1.status}). ${detail.slice(0, 180)}`.trim());
   }
 
-  const otpNum = crypto.randomInt(100000, 999999).toString();
+  const j1 = (await step1.json()) as { temp_token?: string; token?: string };
+  const tempToken = j1.temp_token || j1.token;
+  if (!tempToken) {
+    throw new Error('Nubra did not return an OTP challenge token. Please check the Nubra account/API access.');
+  }
+
   pendingChallenges.set(challengeId, {
     challengeId,
     userId,
     mobile,
     mpin,
     maskedMobile,
-    otpHash: hashOtp(otpNum, challengeId),
-    demoOtpCode: otpNum,
-    mode: 'sandbox-verified',
-    provider,
+    otpHash: '',
+    demoOtpCode: null,
+    mode: 'live-api',
+    provider: 'nubra',
+    nubraTempToken: tempToken,
+    nubraDeviceId: deviceId,
     expiresAt: Date.now() + 5 * 60 * 1000,
   });
-
   return {
     challengeId,
     maskedMobile,
-    mode: 'sandbox-verified',
-    provider,
-    otpHint: otpNum,
-    message: `Verification OTP generated for ${maskedMobile}. Enter the 6-digit OTP to connect Broker & Nubra feeds.`,
+    mode: 'live-api',
+    provider: 'nubra',
+    message: `Nubra OTP request sent to registered mobile number ending ${mobile.slice(-4)}.`,
   };
 }
 
