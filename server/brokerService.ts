@@ -204,19 +204,6 @@ export async function verifyBrokerOtp(
     }
     nubraAuthToken = finalToken;
     nubraDeviceId = deviceId;
-  } else if (challenge.mode === 'live-api' && process.env.BROKER_API_BASE_URL) {
-    const res = await fetch(
-      `${process.env.BROKER_API_BASE_URL.replace(/\/$/, '')}/v1/auth/verify-otp`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile: challenge.mobile, otp }),
-        signal: AbortSignal.timeout(7000),
-      },
-    );
-    if (!res.ok) {
-      throw new Error('Broker rejected the OTP. Please verify and try again.');
-    }
   } else {
     const submittedHash = hashOtp(otp, challengeId);
     if (
