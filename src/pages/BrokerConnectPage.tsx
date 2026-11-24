@@ -1,15 +1,12 @@
 import React, { useState } from 'react';
 import { CheckCircle2, KeyRound, Link2, Lock, Smartphone, Unplug } from 'lucide-react';
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { OperationType, db, handleFirestoreError } from '../lib/firebase';
-import { AuthGatePage } from '../components/AuthGatePage';
 import type { AppPage } from '../components/TopNav';
 
 export function BrokerConnectPage({ onNavigate }: { onNavigate?: (page: AppPage) => void }) {
   const { user, isVerified, brokerSession, setBrokerSessionState, brokerToken } = useAuth();
 
-  const [provider, setProvider] = useState<'broker' | 'nubra'>('broker');
+  const provider = 'nubra' as const;
   const [mobile, setMobile] = useState('');
   const [mpin, setMpin] = useState('');
   const [otp, setOtp] = useState('');
@@ -19,14 +16,6 @@ export function BrokerConnectPage({ onNavigate }: { onNavigate?: (page: AppPage)
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (!user || !isVerified) {
-    return (
-      <AuthGatePage
-        title="Sign in to connect Broker"
-        subtitle="Authenticate with Google / Gmail or verified Email before linking your Broker account."
-      />
-    );
-  }
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,33 +78,6 @@ export function BrokerConnectPage({ onNavigate }: { onNavigate?: (page: AppPage)
         };
       };
 
-      // Save non-sensitive broker connection metadata to Firestore (never storing raw MPIN)
-      const connPath = `users/${user.uid}/brokerConnections/primary`;
-      const connRef = doc(db, 'users', user.uid, 'brokerConnections', 'primary');
-      try {
-        const existingSnap = await getDoc(connRef);
-        if (existingSnap.exists()) {
-          await updateDoc(connRef, {
-            maskedMobile: session.maskedMobile,
-            clientCode: session.clientCode,
-            status: 'connected',
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          await setDoc(connRef, {
-            userId: user.uid,
-            brokerName: 'Broker',
-            maskedMobile: session.maskedMobile,
-            clientCode: session.clientCode,
-            status: 'connected',
-            connectedAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        }
-      } catch (fsErr) {
-        handleFirestoreError(fsErr, OperationType.WRITE, connPath);
-      }
-
       setBrokerSessionState(sessionToken, session);
       setChallengeId(null);
       setOtpHint(null);
@@ -141,20 +103,6 @@ export function BrokerConnectPage({ onNavigate }: { onNavigate?: (page: AppPage)
         },
         body: JSON.stringify({ userId: user.uid }),
       });
-
-      const connPath = `users/${user.uid}/brokerConnections/primary`;
-      const connRef = doc(db, 'users', user.uid, 'brokerConnections', 'primary');
-      try {
-        const snap = await getDoc(connRef);
-        if (snap.exists()) {
-          await updateDoc(connRef, {
-            status: 'disconnected',
-            updatedAt: serverTimestamp(),
-          });
-        }
-      } catch (fsErr) {
-        handleFirestoreError(fsErr, OperationType.UPDATE, connPath);
-      }
 
       setBrokerSessionState(null, null);
       setStatusMessage('Broker session disconnected.');
@@ -301,28 +249,9 @@ export function BrokerConnectPage({ onNavigate }: { onNavigate?: (page: AppPage)
                   Connection Mode
                 </span>
                 <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-lg">
-                  <button
-                    type="button"
-                    onClick={() => setProvider('broker')}
-                    className={`py-2 px-3 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                      provider === 'broker'
-                        ? 'bg-white text-slate-950 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Standard Broker Connect
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setProvider('nubra')}
-                    className={`py-2 px-3 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                      provider === 'nubra'
-                        ? 'bg-white text-slate-950 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
+                  <div className="py-2 px-3 text-xs font-semibold rounded-md bg-white text-slate-950 text-center col-span-2">
                     Nubra Live OTP + MPIN
-                  </button>
+                  </div>
                 </div>
               </div>
 
@@ -376,13 +305,7 @@ export function BrokerConnectPage({ onNavigate }: { onNavigate?: (page: AppPage)
             </form>
           ) : (
             <form onSubmit={(e) => void handleVerifyOtp(e)} className="space-y-5">
-              {otpHint && (
-                <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                  Verification OTP code: <span className="font-mono font-bold">{otpHint}</span>{' '}
-                  (configure <span className="font-mono">BROKER_API_BASE_URL</span> in server
-                  secrets for live SMS gateway dispatch).
-                </div>
-              )}
+    
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
