@@ -1,0 +1,207 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated trader account, 3-day trial status, and Google Play subscription plan.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "subscriptionTier": {
+          "type": "string",
+          "enum": ["trial", "monthly", "yearly"]
+        },
+        "subscriptionStatus": {
+          "type": "string",
+          "enum": ["active", "expired"]
+        },
+        "trialEndsAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "planPurchasedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "googlePlayOrderId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 100,
+          "pattern": "^[a-zA-Z0-9_\\-.]+$"
+        },
+        "paymentLinkedAccount": {
+          "type": "string",
+          "format": "email",
+          "enum": ["YOUR_SUPPORT_EMAIL@example.com"],
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "displayName", "subscriptionTier", "subscriptionStatus", "trialEndsAt", "createdAt", "updatedAt"]
+    },
+    "BrokerConnection": {
+      "title": "BrokerConnection",
+      "description": "Multi-broker connection metadata without storing raw MPIN secrets.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "brokerName": {
+          "type": "string",
+          "enum": ["Broker"]
+        },
+        "maskedMobile": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 20
+        },
+        "clientCode": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["connected", "disconnected"]
+        },
+        "connectedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "brokerName", "maskedMobile", "clientCode", "status", "connectedAt", "updatedAt"]
+    },
+    "SavedScanPick": {
+      "title": "SavedScanPick",
+      "description": "Trader-bookmarked scanner signal with entry, target, and stop-loss levels.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30,
+          "pattern": "^[a-zA-Z0-9_\\-.&]+$"
+        },
+        "scanner": {
+          "type": "string",
+          "enum": ["scanner1", "scanner2", "scanner3"]
+        },
+        "signal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "entryPrice": {
+          "type": "number"
+        },
+        "targetPrice": {
+          "type": "number"
+        },
+        "stopLoss": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "symbol", "scanner", "signal", "entryPrice", "targetPrice", "stopLoss", "createdAt"]
+    },
+    "ContactInquiry": {
+      "title": "ContactInquiry",
+      "description": "Customer inquiry sent to GazabPaisa Support (India).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "phone": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 20
+        },
+        "message": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 1500
+        },
+        "routedTo": {
+          "type": "string",
+          "format": "email",
+          "enum": ["YOUR_SUPPORT_EMAIL@example.com"],
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "email", "phone", "message", "routedTo", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user profile, 3-day trial timestamp, and active subscription plan."
+    },
+    "/users/{userId}/brokerConnections/{connectionId}": {
+      "schema": { "$ref": "#/entities/BrokerConnection" },
+      "description": "User's Broker connection metadata."
+    },
+    "/users/{userId}/watchlists/{stockId}": {
+      "schema": { "$ref": "#/entities/SavedScanPick" },
+      "description": "User's bookmarked scanner picks."
+    },
+    "/contactInquiries/{inquiryId}": {
+      "schema": { "$ref": "#/entities/ContactInquiry" },
+      "description": "Write-only public inquiry dropbox for support requests."
+    }
+  }
+}

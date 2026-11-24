@@ -1,0 +1,8 @@
+{
+  "name": "GazabPaisa Awesome Scanner",
+  "description": "Institutional-grade NSE Nifty 500 & F&O technical stock scanner integrated with Broker live feed, Market Bias, Twin Range, BBWP, PVO, and Gemini AI analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
