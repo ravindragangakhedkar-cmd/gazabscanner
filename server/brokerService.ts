@@ -137,10 +137,10 @@ export async function initiateBrokerLogin(
   // Fail before sending an SMS if the stable encryption key is not configured.
   getEncryptionKey();
 
-  if (!/^[6-9]\\d{9}$/.test(mobile)) {
+  if (!/^[6-9]\d{9}$/.test(mobile)) {
     throw new Error('Enter a valid 10-digit Indian registered mobile number.');
   }
-  if (!/^\\d{4}$/.test(mpin)) {
+  if (!/^\d{4}$/.test(mpin)) {
     throw new Error('MPIN must be exactly 4 digits.');
   }
 
@@ -245,7 +245,7 @@ export async function verifyBrokerOtp(
   challengeId: string,
   otp: string,
 ): Promise<{ sessionToken: string; session: BrokerSessionInfo }> {
-  if (!/^\\d{6}$/.test(otp)) {
+  if (!/^\d{6}$/.test(otp)) {
     throw new Error('OTP must be a 6-digit numeric code.');
   }
 
