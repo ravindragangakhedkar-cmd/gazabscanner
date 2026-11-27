@@ -119,7 +119,9 @@ export async function initiateBrokerLogin(
         'Content-Type': 'application/json',
         'x-temp-token': initialTempToken,
       },
-      body: JSON.stringify({ phone: mobile }),
+      // Nubra REST API V3 requires skip_totp=true on this second request
+      // to dispatch the SMS OTP, including accounts with TOTP configured.
+      body: JSON.stringify({ phone: mobile, skip_totp: true }),
       signal: AbortSignal.timeout(12000),
     });
   } catch {
@@ -131,8 +133,27 @@ export async function initiateBrokerLogin(
     throw new Error(`Nubra could not dispatch the SMS OTP (HTTP ${step2.status}). ${detail.slice(0, 180)}`.trim());
   }
 
-  const j2 = (await step2.json()) as { temp_token?: string; token?: string; message?: string };
-  const latestTempToken = j2.temp_token || j2.token || initialTempToken;
+  const j2 = (await step2.json()) as {
+    temp_token?: string;
+    token?: string;
+    message?: string;
+    next?: string;
+    attempts_left?: number;
+    expiry?: number;
+  };
+
+  // A 2xx response alone is not proof that Nubra accepted the SMS challenge.
+  // The documented V3 response is message="OTP sent", next="VERIFY_MOBILE",
+  // and a refreshed temp_token which must be used by /verifyphoneotp.
+  if ((j2.message || '').trim().toLowerCase() !== 'otp sent' || j2.next !== 'VERIFY_MOBILE') {
+    const safeMessage = (j2.message || 'No OTP dispatch confirmation returned').slice(0, 120);
+    throw new Error(`Nubra did not confirm SMS OTP dispatch: ${safeMessage} (next: ${j2.next || 'not provided'}).`);
+  }
+
+  const latestTempToken = j2.temp_token || j2.token;
+  if (!latestTempToken) {
+    throw new Error('Nubra confirmed the OTP request but did not return the refreshed temporary token required for verification.');
+  }
 
   pendingChallenges.set(challengeId, {
     challengeId,
@@ -153,7 +174,7 @@ export async function initiateBrokerLogin(
     maskedMobile,
     mode: 'live-api',
     provider: 'nubra',
-    message: `Nubra OTP request sent to registered mobile number ending ${mobile.slice(-4)}.`,
+    message: `Nubra confirmed the SMS OTP request for mobile ending ${mobile.slice(-4)}. Please check your SMS inbox and enter the 6-digit code.`,
   };
 }
 
