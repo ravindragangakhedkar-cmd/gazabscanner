@@ -65,9 +65,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
         const data = (await response.json()) as { session?: BrokerSessionInfo | null };
         if (cancelled) return;
-        if (response.ok && data.session?.connected) setBrokerSession(data.session);
+        if (!response.ok) {
+          // A transient API/serverless error must not erase a valid saved token.
+          if (!cancelled) setBrokerSession(null);
+          return;
+        }
+        if (data.session?.connected) setBrokerSession(data.session);
         else setBrokerSessionState(null, null);
       } catch {
+        // Keep the token in localStorage and retry status on the next app load.
         if (!cancelled) setBrokerSession(null);
       }
     };
