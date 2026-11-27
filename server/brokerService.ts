@@ -217,7 +217,7 @@ export async function initiateBrokerLogin(
 
   // The OTP challenge contains MPIN and Nubra's temporary token, so encrypt it
   // in the opaque challenge ID rather than storing it in a process-local Map.
-  const challengeToken = sealPayload<PendingChallenge>({
+  const challengeToken = sealPayload({
     challengeId,
     userId,
     mobile,
