@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { User } from 'firebase/auth';
 import type { BrokerSessionInfo, UserProfileDoc } from '../../shared/types';
 
@@ -38,16 +38,51 @@ const disabled = async (): Promise<never> => {
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [brokerToken, setBrokerToken] = useState<string | null>(null);
+  const [brokerToken, setBrokerToken] = useState<string | null>(() => {
+    try {
+      return typeof window !== 'undefined' ? window.localStorage.getItem('gazabscanner_broker_session') : null;
+    } catch { return null; }
+  });
   const [brokerSession, setBrokerSession] = useState<BrokerSessionInfo | null>(null);
   const setBrokerSessionState = useCallback((token: string | null, session: BrokerSessionInfo | null) => {
     setBrokerToken(token);
     setBrokerSession(session);
+    try {
+      if (typeof window !== 'undefined') {
+        if (token) window.localStorage.setItem('gazabscanner_broker_session', token);
+        else window.localStorage.removeItem('gazabscanner_broker_session');
+      }
+    } catch { /* retain in-memory state for this tab */ }
   }, []);
+  useEffect(() => {
+    if (!brokerToken) { setBrokerSession(null); return; }
+    let cancelled = false;
+    const restore = async () => {
+      try {
+        const response = await fetch('/api/broker/status', {
+          headers: { 'x-broker-session': brokerToken },
+          cache: 'no-store',
+        });
+        const data = (await response.json()) as { session?: BrokerSessionInfo | null };
+        if (cancelled) return;
+        if (!response.ok) {
+          // A transient API/serverless error must not erase a valid saved token.
+          if (!cancelled) setBrokerSession(null);
+          return;
+        }
+        if (data.session?.connected) setBrokerSession(data.session);
+        else setBrokerSessionState(null, null);
+      } catch {
+        // Keep the token in localStorage and retry status on the next app load.
+        if (!cancelled) setBrokerSession(null);
+      }
+    };
+    void restore();
+    return () => { cancelled = true; };
+  }, [brokerToken, setBrokerSessionState]);
   const signOut = useCallback(async () => {
-    setBrokerToken(null);
-    setBrokerSession(null);
-  }, []);
+    setBrokerSessionState(null, null);
+  }, [setBrokerSessionState]);
 
   return (
     <AuthContext.Provider value={{

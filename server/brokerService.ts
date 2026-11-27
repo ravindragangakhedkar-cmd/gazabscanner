@@ -17,17 +17,88 @@ interface PendingChallenge {
 }
 
 interface ActiveBrokerSession extends BrokerSessionInfo {
-  token: string;
   userId: string;
   nubraAuthToken?: string;
   nubraDeviceId?: string;
+  expiresAt: number;
 }
 
-const pendingChallenges = new Map<string, PendingChallenge>();
-const activeSessionsByToken = new Map<string, ActiveBrokerSession>();
-const activeTokenByUserId = new Map<string, string>();
+const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const CHALLENGE_LIFETIME_MS = 5 * 60 * 1000;
+const TOKEN_VERSION = 'v1';
 
-const SESSION_SECRET = process.env.BROKER_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+function getSessionSecret(): string {
+  const secret = process.env.BROKER_SESSION_SECRET?.trim();
+  if (!secret || Buffer.byteLength(secret, 'utf8') < 32) {
+    throw new Error(
+      'Broker session security is not configured. Add a stable BROKER_SESSION_SECRET (at least 32 characters) in Vercel Environment Variables, then redeploy.',
+    );
+  }
+  return secret;
+}
+
+function getEncryptionKey(): Buffer {
+  return crypto.createHash('sha256')
+    .update('gazabscanner:broker-session:v1:')
+    .update(getSessionSecret())
+    .digest();
+}
+
+function sealPayload(payload: object): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(), iv);
+  const encrypted = Buffer.concat([
+    cipher.update(JSON.stringify(payload), 'utf8'),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  return [
+    TOKEN_VERSION,
+    iv.toString('base64url'),
+    tag.toString('base64url'),
+    encrypted.toString('base64url'),
+  ].join('.');
+}
+
+function openPayload<T>(token: string): T | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 4 || parts[0] !== TOKEN_VERSION) return null;
+    const iv = Buffer.from(parts[1], 'base64url');
+    const tag = Buffer.from(parts[2], 'base64url');
+    const encrypted = Buffer.from(parts[3], 'base64url');
+    if (iv.length !== 12 || tag.length !== 16 || encrypted.length === 0) return null;
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getEncryptionKey(), iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([
+      decipher.update(encrypted),
+      decipher.final(),
+    ]).toString('utf8');
+    return JSON.parse(decrypted) as T;
+  } catch {
+    return null;
+  }
+}
+
+function hashOtp(otp: string, challengeId: string): string {
+  return crypto.createHmac('sha256', getSessionSecret()).update(`${challengeId}:${otp}`).digest('hex');
+}
+
+function isUnexpired(value: { expiresAt?: number } | null): value is { expiresAt: number } {
+  return Boolean(value && typeof value.expiresAt === 'number' && Date.now() < value.expiresAt);
+}
+
+function publicSession(session: ActiveBrokerSession): BrokerSessionInfo {
+  return {
+    connected: session.connected,
+    maskedMobile: session.maskedMobile,
+    clientCode: session.clientCode,
+    mode: session.mode,
+    provider: session.provider,
+    nubraLiveAuth: session.nubraLiveAuth,
+    connectedAtIso: session.connectedAtIso,
+  };
+}
 
 function getSafeNubraBaseUrl(): string {
   const configured = process.env.NUBRA_API_BASE_URL?.trim() || 'https://api.nubra.io';
@@ -44,10 +115,6 @@ function getSafeNubraBaseUrl(): string {
   } catch {
     return 'https://api.nubra.io';
   }
-}
-
-function hashOtp(otp: string, challengeId: string): string {
-  return crypto.createHmac('sha256', SESSION_SECRET).update(`${challengeId}:${otp}`).digest('hex');
 }
 
 function maskIndianMobile(mobile: string): string {
@@ -67,6 +134,9 @@ export async function initiateBrokerLogin(
   otpHint?: string;
   message: string;
 }> {
+  // Fail before sending an SMS if the stable encryption key is not configured.
+  getEncryptionKey();
+
   if (!/^[6-9]\d{9}$/.test(mobile)) {
     throw new Error('Enter a valid 10-digit Indian registered mobile number.');
   }
@@ -76,9 +146,7 @@ export async function initiateBrokerLogin(
 
   const challengeId = crypto.randomUUID();
   const maskedMobile = maskIndianMobile(mobile);
-  // Use Nubra's phone OTP flow only; no external broker API fallback.
-  // no locally generated/demo OTP: the code must be delivered by Nubra to the
-  // registered mobile number before the user can continue.
+  // Nubra's two-step REST V3 flow is intentionally preserved.
   const nubraBase = getSafeNubraBaseUrl();
   const deviceId =
     process.env.NUBRA_DEVICE_ID?.trim() || `GP-${crypto.randomBytes(6).toString('hex')}`;
@@ -108,9 +176,7 @@ export async function initiateBrokerLogin(
     throw new Error('Nubra did not return the initial authentication token. Please check the Nubra account/API access.');
   }
 
-  // Nubra REST V3 requires a SECOND /sendphoneotp call with the initial
-  // temporary token. The first call only creates the login challenge; this
-  // second call is what actually dispatches the SMS OTP.
+  // The second call is the SMS dispatch step. Keep skip_totp=true.
   let step2: Response;
   try {
     step2 = await fetch(`${nubraBase}/sendphoneotp`, {
@@ -119,8 +185,6 @@ export async function initiateBrokerLogin(
         'Content-Type': 'application/json',
         'x-temp-token': initialTempToken,
       },
-      // Nubra REST API V3 requires skip_totp=true on this second request
-      // to dispatch the SMS OTP, including accounts with TOTP configured.
       body: JSON.stringify({ phone: mobile, skip_totp: true }),
       signal: AbortSignal.timeout(12000),
     });
@@ -141,10 +205,6 @@ export async function initiateBrokerLogin(
     attempts_left?: number;
     expiry?: number;
   };
-
-  // A 2xx response alone is not proof that Nubra accepted the SMS challenge.
-  // The documented V3 response is message="OTP sent", next="VERIFY_MOBILE",
-  // and a refreshed temp_token which must be used by /verifyphoneotp.
   if ((j2.message || '').trim().toLowerCase() !== 'otp sent' || j2.next !== 'VERIFY_MOBILE') {
     const safeMessage = (j2.message || 'No OTP dispatch confirmation returned').slice(0, 120);
     throw new Error(`Nubra did not confirm SMS OTP dispatch: ${safeMessage} (next: ${j2.next || 'not provided'}).`);
@@ -155,7 +215,9 @@ export async function initiateBrokerLogin(
     throw new Error('Nubra confirmed the OTP request but did not return the refreshed temporary token required for verification.');
   }
 
-  pendingChallenges.set(challengeId, {
+  // The OTP challenge contains MPIN and Nubra's temporary token, so encrypt it
+  // in the opaque challenge ID rather than storing it in a process-local Map.
+  const challengeToken = sealPayload({
     challengeId,
     userId,
     mobile,
@@ -167,10 +229,10 @@ export async function initiateBrokerLogin(
     provider: 'nubra',
     nubraTempToken: latestTempToken,
     nubraDeviceId: deviceId,
-    expiresAt: Date.now() + 5 * 60 * 1000,
+    expiresAt: Date.now() + CHALLENGE_LIFETIME_MS,
   });
   return {
-    challengeId,
+    challengeId: challengeToken,
     maskedMobile,
     mode: 'live-api',
     provider: 'nubra',
@@ -187,13 +249,9 @@ export async function verifyBrokerOtp(
     throw new Error('OTP must be a 6-digit numeric code.');
   }
 
-  const challenge = pendingChallenges.get(challengeId);
-  if (!challenge || challenge.userId !== userId) {
+  const challenge = openPayload<PendingChallenge>(challengeId);
+  if (!challenge || challenge.userId !== userId || !isUnexpired(challenge)) {
     throw new Error('OTP session expired or not found. Please initiate Broker login again.');
-  }
-  if (Date.now() > challenge.expiresAt) {
-    pendingChallenges.delete(challengeId);
-    throw new Error('OTP expired. Please request a new OTP.');
   }
 
   let nubraAuthToken = process.env.NUBRA_AUTH_TOKEN?.trim() || undefined;
@@ -220,9 +278,6 @@ export async function verifyBrokerOtp(
       next?: string;
       message?: string;
     };
-
-    // OTP verification returns an intermediate auth_token. MPIN verification
-    // is a separate mandatory step and must use Authorization: Bearer.
     if (!otpJson.auth_token) {
       throw new Error('Nubra verified the OTP but did not return the MPIN authentication token.');
     }
@@ -252,7 +307,7 @@ export async function verifyBrokerOtp(
     nubraAuthToken = pinJson.session_token;
     nubraDeviceId = deviceId;
   } else {
-    const submittedHash = hashOtp(otp, challengeId);
+    const submittedHash = hashOtp(otp, challenge.challengeId);
     if (
       submittedHash.length !== challenge.otpHash.length ||
       !crypto.timingSafeEqual(Buffer.from(submittedHash), Buffer.from(challenge.otpHash))
@@ -261,12 +316,8 @@ export async function verifyBrokerOtp(
     }
   }
 
-  pendingChallenges.delete(challengeId);
-
-  const sessionToken = crypto.randomBytes(24).toString('hex');
   const clientCode = `BK${challenge.mobile.slice(-6).toUpperCase()}`;
   const session: ActiveBrokerSession = {
-    token: sessionToken,
     userId,
     connected: true,
     maskedMobile: challenge.maskedMobile,
@@ -277,69 +328,42 @@ export async function verifyBrokerOtp(
     connectedAtIso: new Date().toISOString(),
     nubraAuthToken,
     nubraDeviceId,
+    expiresAt: Date.now() + SESSION_LIFETIME_MS,
   };
+  // AES-GCM makes the bearer token opaque and tamper-evident while keeping
+  // session state portable across Vercel serverless instances and cold starts.
+  const sessionToken = sealPayload(session);
 
-  activeSessionsByToken.set(sessionToken, session);
-  activeTokenByUserId.set(userId, sessionToken);
-
-  return {
-    sessionToken,
-    session: {
-      connected: session.connected,
-      maskedMobile: session.maskedMobile,
-      clientCode: session.clientCode,
-      mode: session.mode,
-      provider: session.provider,
-      nubraLiveAuth: session.nubraLiveAuth,
-      connectedAtIso: session.connectedAtIso,
-    },
-  };
+  return { sessionToken, session: publicSession(session) };
 }
 
 export function getBrokerSessionByToken(token: string | undefined): BrokerSessionInfo | null {
   if (!token) return null;
-  const session = activeSessionsByToken.get(token);
-  if (!session) return null;
-  return {
-    connected: session.connected,
-    maskedMobile: session.maskedMobile,
-    clientCode: session.clientCode,
-    mode: session.mode,
-    provider: session.provider,
-    nubraLiveAuth: session.nubraLiveAuth,
-    connectedAtIso: session.connectedAtIso,
-  };
+  const session = openPayload<ActiveBrokerSession>(token);
+  if (!session || !session.connected || !isUnexpired(session)) return null;
+  return publicSession(session);
 }
 
 export function getNubraCredentialsForSession(token: string | undefined): {
   authToken?: string;
   deviceId?: string;
 } {
-  const envToken = process.env.NUBRA_AUTH_TOKEN?.trim() || undefined;
-  const envDevice = process.env.NUBRA_DEVICE_ID?.trim() || 'GP-WEB';
   if (!token) {
-    return { authToken: envToken, deviceId: envDevice };
+    return {
+      authToken: process.env.NUBRA_AUTH_TOKEN?.trim() || undefined,
+      deviceId: process.env.NUBRA_DEVICE_ID?.trim() || 'GP-WEB',
+    };
   }
-  const session = activeSessionsByToken.get(token);
+  const session = openPayload<ActiveBrokerSession>(token);
+  if (!session || !session.connected || !isUnexpired(session)) return {};
   return {
-    authToken: session?.nubraAuthToken || envToken,
-    deviceId: session?.nubraDeviceId || envDevice,
+    authToken: session.nubraAuthToken,
+    deviceId: session.nubraDeviceId || 'GP-WEB',
   };
 }
 
-export function disconnectBrokerSession(token: string | undefined, userId?: string): void {
-  if (token) {
-    const session = activeSessionsByToken.get(token);
-    if (session) {
-      activeTokenByUserId.delete(session.userId);
-      activeSessionsByToken.delete(token);
-    }
-  }
-  if (userId) {
-    const existingToken = activeTokenByUserId.get(userId);
-    if (existingToken) {
-      activeSessionsByToken.delete(existingToken);
-      activeTokenByUserId.delete(userId);
-    }
-  }
+export function disconnectBrokerSession(_token: string | undefined, _userId?: string): void {
+  // There is deliberately no server-side session store. The browser removes
+  // its bearer token on disconnect. To revoke a copied token globally, rotate
+  // BROKER_SESSION_SECRET in Vercel; that invalidates all outstanding sessions.
 }
