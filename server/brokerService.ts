@@ -102,11 +102,37 @@ export async function initiateBrokerLogin(
     throw new Error(`Nubra could not send the OTP (HTTP ${step1.status}). ${detail.slice(0, 180)}`.trim());
   }
 
-  const j1 = (await step1.json()) as { temp_token?: string; token?: string };
-  const tempToken = j1.temp_token || j1.token;
-  if (!tempToken) {
-    throw new Error('Nubra did not return an OTP challenge token. Please check the Nubra account/API access.');
+  const j1 = (await step1.json()) as { temp_token?: string; token?: string; message?: string };
+  const initialTempToken = j1.temp_token || j1.token;
+  if (!initialTempToken) {
+    throw new Error('Nubra did not return the initial authentication token. Please check the Nubra account/API access.');
   }
+
+  // Nubra REST V3 requires a SECOND /sendphoneotp call with the initial
+  // temporary token. The first call only creates the login challenge; this
+  // second call is what actually dispatches the SMS OTP.
+  let step2: Response;
+  try {
+    step2 = await fetch(`${nubraBase}/sendphoneotp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-temp-token': initialTempToken,
+      },
+      body: JSON.stringify({ phone: mobile }),
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch {
+    throw new Error('Nubra created the login challenge but the OTP dispatch request could not reach Nubra. Please try again.');
+  }
+
+  if (!step2.ok) {
+    const detail = await step2.text().catch(() => '');
+    throw new Error(`Nubra could not dispatch the SMS OTP (HTTP ${step2.status}). ${detail.slice(0, 180)}`.trim());
+  }
+
+  const j2 = (await step2.json()) as { temp_token?: string; token?: string; message?: string };
+  const latestTempToken = j2.temp_token || j2.token || initialTempToken;
 
   pendingChallenges.set(challengeId, {
     challengeId,
@@ -118,7 +144,7 @@ export async function initiateBrokerLogin(
     demoOtpCode: null,
     mode: 'live-api',
     provider: 'nubra',
-    nubraTempToken: tempToken,
+    nubraTempToken: latestTempToken,
     nubraDeviceId: deviceId,
     expiresAt: Date.now() + 5 * 60 * 1000,
   });
@@ -169,40 +195,40 @@ export async function verifyBrokerOtp(
       throw new Error('Nubra rejected the OTP. Please verify and try again.');
     }
     const otpJson = (await verifyOtpRes.json()) as {
-      temp_token?: string;
       auth_token?: string;
-      session_token?: string;
-      token?: string;
+      next?: string;
+      message?: string;
     };
-    const nextToken = otpJson.temp_token || otpJson.auth_token || challenge.nubraTempToken;
-    let finalToken = otpJson.session_token || otpJson.auth_token;
 
-    if (!finalToken && nextToken) {
-      const verifyPinRes = await fetch(`${nubraBase}/verifypin`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-temp-token': nextToken,
-          'x-device-id': deviceId,
-        },
-        body: JSON.stringify({ pin: challenge.mpin }),
-        signal: AbortSignal.timeout(7000),
-      });
-      if (!verifyPinRes.ok) {
-        throw new Error('Nubra rejected the 4-digit MPIN. Please check and reconnect.');
-      }
-      const pinJson = (await verifyPinRes.json()) as {
-        session_token?: string;
-        auth_token?: string;
-        token?: string;
-      };
-      finalToken = pinJson.session_token || pinJson.auth_token || pinJson.token;
+    // OTP verification returns an intermediate auth_token. MPIN verification
+    // is a separate mandatory step and must use Authorization: Bearer.
+    if (!otpJson.auth_token) {
+      throw new Error('Nubra verified the OTP but did not return the MPIN authentication token.');
     }
 
-    if (!finalToken) {
-      throw new Error('Unable to obtain Nubra session token after verification.');
+    const verifyPinRes = await fetch(`${nubraBase}/verifypin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${otpJson.auth_token}`,
+        'x-device-id': deviceId,
+      },
+      body: JSON.stringify({ pin: challenge.mpin }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!verifyPinRes.ok) {
+      const detail = await verifyPinRes.text().catch(() => '');
+      throw new Error(`Nubra rejected the 4-digit MPIN (HTTP ${verifyPinRes.status}). ${detail.slice(0, 160)}`.trim());
     }
-    nubraAuthToken = finalToken;
+    const pinJson = (await verifyPinRes.json()) as {
+      session_token?: string;
+      message?: string;
+    };
+    if (!pinJson.session_token) {
+      throw new Error('Nubra did not return a final session token after MPIN verification.');
+    }
+
+    nubraAuthToken = pinJson.session_token;
     nubraDeviceId = deviceId;
   } else {
     const submittedHash = hashOtp(otp, challengeId);
